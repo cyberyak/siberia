@@ -3,6 +3,7 @@
 #import <Metal/Metal.h>
 #include <node_api.h>
 #include <unistd.h>
+#include <string.h>
 #include <atomic>
 #include <vector>
 #include "siberia.h"
@@ -34,14 +35,14 @@ static id<MTLTexture> wrap(IOSurfaceRef s) {
   return [device newTextureWithDescriptor:d iosurface:s plane:0];
 }
 
-// publish(name, width, height, maxSubscribers) -> handle
+// publish(name, width, height, maxSubscribers, format) -> handle. format is 'BGRA' or 'RGBA'.
 static napi_value publish(napi_env env, napi_callback_info info) {
-  ARGS(4); char name[SIBERIA_NAME_MAX * 4]; toStr(env, argv[0], name, sizeof name); ensureMetal();
-  siberia_format f = { (uint32_t)toInt(env, argv[1]), (uint32_t)toInt(env, argv[2]), 'BGRA', 4, 0 };
+  ARGS(5); char name[SIBERIA_NAME_MAX * 4], format[8] = "BGRA"; toStr(env, argv[0], name, sizeof name);
+  napi_valuetype type = napi_undefined; if (argc > 4) napi_typeof(env, argv[4], &type);
+  if (type == napi_string) toStr(env, argv[4], format, sizeof format);
+  siberia_format f = { (uint32_t)toInt(env, argv[1]), (uint32_t)toInt(env, argv[2]), strcmp(format, "RGBA") ? (uint32_t)'BGRA' : (uint32_t)'RGBA', 4, 0 };
   auto *p = new Publisher(); int r = siberia_publisher_create(name, &f, toInt(env, argv[3]), &p->p);
   if (r) { delete p; return fail(env, r); }
-  p->textures = [NSMutableArray array];
-  for (int i = 0; i < siberia_publisher_slot_count(p->p); i++) [p->textures addObject:wrap(siberia_publisher_surface(p->p, i))];
   publishers.push_back(p);
   return number(env, (double)publishers.size() - 1);
 }
@@ -79,6 +80,7 @@ static napi_value send(napi_env env, napi_callback_info info) {
       if (!p->busy.compare_exchange_strong(expected, true)) { busyDrops++; continue; }
       siberia_frame f;
       if (siberia_publisher_begin(p->p, &f) != SIBERIA_OK) { p->busy = false; slotDrops++; continue; }
+      if (!p->textures) { ensureMetal(); p->textures = [NSMutableArray array]; for (int n = 0; n < siberia_publisher_slot_count(p->p); n++) [p->textures addObject:wrap(siberia_publisher_surface(p->p, n))]; }
       if (!cb) { source = wrap(src); cb = [queue commandBuffer]; blit = [cb blitCommandEncoder]; }
       [blit copyFromTexture:source sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake((i % cols) * tw, (i / cols) * th, 0) sourceSize:MTLSizeMake(tw, th, 1) toTexture:p->textures[f.slot] destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
       items->push_back({ p, f });
@@ -95,6 +97,50 @@ static napi_value send(napi_env env, napi_callback_info info) {
   }
   uint64_t took = siberia_now_ns() - t0, was = sendMaxNs.load();
   sends++; sendNs += took; if (took > was) sendMaxNs = took;
+  return boolean(env, true);
+}
+
+// subscribers(handle) -> how many are connected. Lets an app skip rendering or readback for nobody.
+static napi_value subscriberCount(napi_env env, napi_callback_info info) {
+  ARGS(1); siberia_demand d; siberia_publisher_demand(publishers[(size_t)toInt(env, argv[0])]->p, &d);
+  return number(env, d.subscribers);
+}
+
+// write(handle, pixels): copies CPU pixels into the stream. False drops the frame.
+static napi_value write_(napi_env env, napi_callback_info info) {
+  ARGS(2); Publisher *p = publishers[(size_t)toInt(env, argv[0])]; void *data; size_t bytes; napi_get_typedarray_info(env, argv[1], NULL, &bytes, &data, NULL, NULL);
+  siberia_frame f; uint64_t t0 = siberia_now_ns();
+  if (siberia_publisher_begin(p->p, &f) != SIBERIA_OK) { slotDrops++; return boolean(env, false); }
+  size_t w = IOSurfaceGetWidth(f.surface), h = IOSurfaceGetHeight(f.surface), row = IOSurfaceGetBytesPerRow(f.surface);
+  if (bytes < w * h * 4) { siberia_publisher_cancel(p->p, &f); return boolean(env, false); }
+  IOSurfaceLock(f.surface, 0, NULL);
+  uint8_t *out = (uint8_t *)IOSurfaceGetBaseAddress(f.surface); const uint8_t *in = (const uint8_t *)data;
+  if (row == w * 4) memcpy(out, in, w * h * 4); else for (size_t y = 0; y < h; y++) memcpy(out + y * row, in + y * w * 4, w * 4);
+  IOSurfaceUnlock(f.surface, 0, NULL);
+  siberia_publisher_commit(p->p, &f);
+  uint64_t took = siberia_now_ns() - t0; sends++; sendNs += took; if (took > sendMaxNs.load()) sendMaxNs = took;
+  return boolean(env, true);
+}
+
+// read(sub, width, height, pixels): copies the newest frame out as RGBA, scaling if it has to.
+// Returns true, null with nothing new, or 'closed'.
+static napi_value read_(napi_env env, napi_callback_info info) {
+  ARGS(4); Subscriber *s = subscribers[(size_t)toInt(env, argv[0])]; int w = toInt(env, argv[1]), h = toInt(env, argv[2]); void *data; size_t bytes; napi_get_typedarray_info(env, argv[3], NULL, &bytes, &data, NULL, NULL);
+  if (w < 1 || h < 1 || bytes < (size_t)w * h * 4) return null_(env);
+  siberia_frame f; int r = siberia_subscriber_acquire(s->s, &f);
+  if (r == SIBERIA_CLOSED) { napi_value v; napi_create_string_utf8(env, "closed", NAPI_AUTO_LENGTH, &v); return v; }
+  if (r != SIBERIA_OK) return null_(env);
+  siberia_format fmt; siberia_subscriber_format(s->s, &fmt);
+  int sw = (int)fmt.width, sh = (int)fmt.height, swap = fmt.pixel_format != 'RGBA'; size_t row = IOSurfaceGetBytesPerRow(f.surface);
+  IOSurfaceLock(f.surface, kIOSurfaceLockReadOnly, NULL);
+  const uint8_t *in = (const uint8_t *)IOSurfaceGetBaseAddress(f.surface); uint32_t *out = (uint32_t *)data;
+  for (int y = 0; y < h; y++) {
+    const uint32_t *src = (const uint32_t *)(in + (size_t)(sh == h ? y : (int)(((int64_t)y * 2 + 1) * sh / (h * 2))) * row); uint32_t *dst = out + (size_t)y * w;
+    if (sw == w && !swap) { memcpy(dst, src, (size_t)w * 4); continue; }
+    for (int x = 0; x < w; x++) { uint32_t p = src[sw == w ? x : (int)(((int64_t)x * 2 + 1) * sw / (w * 2))]; dst[x] = swap ? (p & 0xff00ff00u) | (p & 0xffu) << 16 | (p >> 16 & 0xffu) : p; }
+  }
+  IOSurfaceUnlock(f.surface, kIOSurfaceLockReadOnly, NULL);
+  siberia_subscriber_release(s->s);
   return boolean(env, true);
 }
 
@@ -159,6 +205,6 @@ static napi_value stats(napi_env env, napi_callback_info) {
 
 NAPI_MODULE_INIT() {
 #define EXPORT(n, fn) { napi_value f; napi_create_function(env, n, NAPI_AUTO_LENGTH, fn, NULL, &f); napi_set_named_property(env, exports, n, f); }
-  EXPORT("publish", publish) EXPORT("onSent", setOnSent) EXPORT("send", send) EXPORT("subscribe", subscribe) EXPORT("acquire", acquire) EXPORT("release", release) EXPORT("reportRefresh", reportRefresh) EXPORT("closePublisher", closePublisher) EXPORT("closeSubscriber", closeSubscriber) EXPORT("now", now) EXPORT("list", list) EXPORT("stats", stats)
+  EXPORT("publish", publish) EXPORT("subscribers", subscriberCount) EXPORT("write", write_) EXPORT("read", read_) EXPORT("onSent", setOnSent) EXPORT("send", send) EXPORT("subscribe", subscribe) EXPORT("acquire", acquire) EXPORT("release", release) EXPORT("reportRefresh", reportRefresh) EXPORT("closePublisher", closePublisher) EXPORT("closeSubscriber", closeSubscriber) EXPORT("now", now) EXPORT("list", list) EXPORT("stats", stats)
   return exports;
 }

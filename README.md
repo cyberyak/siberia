@@ -4,7 +4,7 @@ Siberia is a protocol for sharing live video between apps on one Mac, built for 
 
 Apps share GPU memory instead of copying frames. A frame costs about the same to share at any resolution, because its pixels never move. The protocol also carries what Syphon-style sharing leaves to each app: timing, colour information, and what the receiver actually needs, so a sender never renders work nobody will use.
 
-**Status:** early. The core library works and is tested on one Mac, and it works from Electron, but no real app uses it yet. The protocol is a draft and will change.
+**Status:** early. The core library works and is tested on one Mac, and VRS, a modular video synthesizer, uses it in its desktop app. The protocol is a draft and will change.
 
 ## Goals
 
@@ -55,6 +55,17 @@ Running on the core library has only been measured with another app holding the 
 
 For comparison, sending 4K frames over localhost HTTP reached 14 fps at 107% CPU. Full figures are in [experiments/electron-test/RESULTS.md](experiments/electron-test/RESULTS.md).
 
+### VRS
+
+The first real app. VRS reads each frame back from WebGPU and copies it straight into a stream, measured with another app holding the GPU at about 95%.
+
+| Output | Siberia | Localhost HTTP to Syphon |
+|---|---|---|
+| 1080p | 60 fps at 74% CPU | 57 fps at 128% CPU |
+| 4K | 60 fps at 123% CPU, none skipped | Scaled to 1080p |
+
+CPU figures cover the whole app, which uses about 40% just rendering. The copy path isn't the cheapest possible, so there's room to improve.
+
 ## Build and test
 
 ```bash
@@ -80,7 +91,3 @@ tools/bench.sh shared
 - [`tools/`](tools/): the Metal benchmark, and a pattern tool that checks streams from outside.
 - [`docs/protocol.md`](docs/protocol.md): the draft protocol.
 - [`experiments/electron-test/`](experiments/electron-test/): the Electron test. It needs its own Node in `.tools` and is set up by hand.
-
-## First user
-
-VRS, a modular video synthesizer, is the first app planned to use Siberia, through an Electron app.

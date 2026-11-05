@@ -2,6 +2,7 @@
 // Frames carry a frame number and a timestamp as bars at the top and bottom.
 //   pattern pub <stream> <w> <h> <fps> <secs>
 //   pattern sub <stream> <secs> <result.json>
+//   pattern watch <stream> <secs> <picture.bmp>: for pictures with no bars, reports rate and motion
 #include "siberia.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,4 +74,33 @@ static int sub(char **a) {
   fclose(o); siberia_subscriber_close(s); return 0;
 }
 
-int main(int c, char **a) { if (c > 6 && !strcmp(a[1], "pub")) return pub(a); if (c > 4 && !strcmp(a[1], "sub")) return sub(a); fprintf(stderr, "see the top of pattern.c\n"); return 1; }
+static int watch(char **a) {
+  double secs = atof(a[3]); siberia_subscriber *s = NULL;
+  for (int i = 0; i < 2000 && siberia_subscriber_connect(a[2], &s); i++) usleep(10000);
+  if (!s) { fprintf(stderr, "no stream\n"); return 2; }
+  siberia_format f; siberia_subscriber_format(s, &f); int w = (int)f.width, h = (int)f.height, n = siberia_subscriber_slot_count(s), rgba = f.pixel_format == 'RGBA';
+  const uint8_t *base[16]; size_t row = 0;
+  for (int i = 0; i < n; i++) { IOSurfaceRef q = siberia_subscriber_surface(s, i); IOSurfaceLock(q, kIOSurfaceLockReadOnly, NULL); base[i] = IOSurfaceGetBaseAddress(q); row = IOSurfaceGetBytesPerRow(q); }
+  long frames = 0, changed = 0, lit = 0, samples = 0; uint64_t last = 0, t0 = 0, end = 0, seq = 0, gaps = 0; siberia_frame fr; int slot = -1;
+  for (;;) {
+    uint64_t now = siberia_now_ns(); if (t0 && now > end) break;
+    int r = siberia_subscriber_acquire(s, &fr); if (r == SIBERIA_CLOSED) break;
+    if (r) { usleep(500); continue; }
+    if (!t0) { t0 = now; end = t0 + (uint64_t)(secs * 1e9); }
+    uint64_t hash = 1469598103934665603ull; const uint8_t *b = base[fr.slot];
+    for (int y = 0; y < 18; y++) for (int x = 0; x < 32; x++) { const uint8_t *p = b + (size_t)((y * 2 + 1) * h / 36) * row + (size_t)((x * 2 + 1) * w / 64) * 4; hash = (hash ^ (uint64_t)(p[0] | p[1] << 8 | p[2] << 16)) * 1099511628211ull; samples++; lit += p[0] + p[1] + p[2] > 24; }
+    frames++; changed += hash != last; last = hash; if (seq && fr.sequence > seq + 1) gaps += fr.sequence - seq - 1; seq = fr.sequence; slot = (int)fr.slot;
+    siberia_subscriber_release(s);
+  }
+  printf("{\"size\":\"%dx%d\",\"frames\":%ld,\"fps\":%.1f,\"changed\":%ld,\"litPercent\":%.0f,\"skipped\":%llu}\n", w, h, frames, frames / secs, changed, samples ? 100.0 * (double)lit / (double)samples : 0, gaps);
+  if (slot >= 0) {
+    int sw = w > 1920 ? 2 : 1, ow = w / sw, oh = h / sw, pad = (4 - ow * 3 % 4) % 4; uint32_t size = 54 + (uint32_t)((ow * 3 + pad) * oh), v;
+    FILE *o = fopen(a[4], "wb"); if (!o) return 3; uint8_t head[54] = { 'B', 'M' }; memcpy(head + 2, &size, 4); head[10] = 54; head[14] = 40; v = (uint32_t)ow; memcpy(head + 18, &v, 4); v = (uint32_t)oh; memcpy(head + 22, &v, 4); head[26] = 1; head[28] = 24; fwrite(head, 1, 54, o);
+    uint8_t zero[3] = { 0, 0, 0 };
+    for (int y = oh - 1; y >= 0; y--) { for (int x = 0; x < ow; x++) { const uint8_t *p = base[slot] + (size_t)(y * sw) * row + (size_t)(x * sw) * 4; uint8_t px[3] = { p[rgba ? 2 : 0], p[1], p[rgba ? 0 : 2] }; fwrite(px, 1, 3, o); } fwrite(zero, 1, (size_t)pad, o); }
+    fclose(o);
+  }
+  siberia_subscriber_close(s); return 0;
+}
+
+int main(int c, char **a) { if (c > 6 && !strcmp(a[1], "pub")) return pub(a); if (c > 4 && !strcmp(a[1], "sub")) return sub(a); if (c > 4 && !strcmp(a[1], "watch")) return watch(a); fprintf(stderr, "see the top of pattern.c\n"); return 1; }

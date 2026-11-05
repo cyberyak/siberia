@@ -66,6 +66,20 @@ sharedTexture.setSharedTextureReceiver(async ({ importedSharedTexture }) => {
 
 A subscriber holds one frame at a time, so don't call `acquire` again until `allReferencesReleased` has run.
 
+## Copying frames instead
+
+The binding can also load in a renderer that has no offscreen window, with `sandbox: false` and `contextIsolation: false`, so typed arrays reach it without another copy. This suits a page that already reads its pixels back.
+
+```js
+const stream = siberia.publish('My output', 3840, 2160, 2, 'RGBA');
+if (siberia.subscribers(stream)) siberia.write(stream, rgbaPixels);
+
+const sub = siberia.subscribe('Their output');
+const result = siberia.read(sub, 1920, 1080, rgbaBuffer); // true, null, or 'closed'
+```
+
+`read` converts to RGBA, and scales to the size you ask for with nearest-neighbour sampling.
+
 ## Other calls
 
 - `list()`: streams on this Mac, as `{ name, pid }`.
