@@ -4,7 +4,7 @@ Siberia is a protocol for sharing live video between apps on one Mac, built for 
 
 Apps share GPU memory instead of copying frames. A frame costs about the same to share at any resolution, because its pixels never move. The protocol also carries what Syphon-style sharing leaves to each app: timing, colour information, and what the receiver actually needs, so a sender never renders work nobody will use.
 
-**Status:** early. The core library works and is tested on one Mac, and VRS, a modular video synthesizer, uses it in its desktop app. The protocol is a draft and will change.
+**Status:** early. The core library works and is tested on one Mac, VRS, a modular video synthesizer, uses it in its desktop app, and ThinFilm, a liquid film simulator, publishes to it. The protocol is a draft and will change.
 
 ## Goals
 
@@ -65,6 +65,12 @@ The first real app. VRS reads each frame back from WebGPU and copies it straight
 | 4K | 60 fps at 123% CPU, none skipped | Scaled to 1080p |
 
 CPU figures cover the whole app, which uses about 40% just rendering. The copy path isn't the cheapest possible, so there's room to improve.
+
+Sending to VRS costs real work, so copies that only publish can stop drawing themselves. Three VRS copies in Send Only and a fourth loading all three streams reached a steady 60 fps at 720p, with gaps of about 20–40 ms. With the full interface on all of them, the same setup ran at 38 fps. Frames arrive in VRS as GPU textures, with a small CPU sample for its control engine. At 720p that saved almost no CPU, and it hasn't been measured at 4K.
+
+### ThinFilm
+
+ThinFilm publishes a stream named `ThinFilm`. The rate depends on how fast it can simulate, not on Siberia: its own measurements range from 9 fps at a resolution of 3840 to 74 fps at 1600. VRS can show 60 fps while a source sends far fewer, so `pattern watch` is the way to check a stream's real rate.
 
 ## Build and test
 
