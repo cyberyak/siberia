@@ -4,7 +4,7 @@ Siberia is a protocol for sharing live video between apps on one Mac, built for 
 
 Apps share GPU memory instead of copying frames. A frame costs about the same to share at any resolution, because its pixels never move. The protocol also carries what Syphon-style sharing leaves to each app: timing, colour information, and what the receiver actually needs, so a sender never renders work nobody will use.
 
-**Status:** early. The transport has been proven in a test, but there is no Siberia library yet. The protocol is a draft and will change.
+**Status:** early. The core library works and is tested on one Mac, but it hasn't been connected to a real app yet. The protocol is a draft and will change.
 
 ## Goals
 
@@ -15,9 +15,32 @@ Apps share GPU memory instead of copying frames. A frame costs about the same to
 
 Sharing between machines is not part of this first version. The design keeps that door open: over a cable or network, a small process could write incoming frames into a local Siberia stream.
 
-## What has been proven
+## Results
 
-Measured on an M2 MacBook Air with Electron 45 and a synthetic test shader. CPU figures use 100% for one core.
+Measured on an M2 MacBook Air. CPU figures use 100% for one core.
+
+### Core library, native Metal
+
+Real 4K rendering at 60 fps, between two processes.
+
+| Measure | Result |
+|---|---|
+| CPU | about 2% per process |
+| Each Siberia call | under 1 µs |
+| System calls from Siberia | 1 in 100,000 frames |
+| CPU with no subscribers, skipping rendering | 0.08% |
+| Torn frames, stress test across 3 processes | 0 in about 235,000 |
+
+The stress test checks every pixel of every frame, and it finds 7,287 torn frames when the claim recheck is removed, so a pass means something.
+
+Two findings were less flattering:
+
+- **Removing per-frame messages barely changed CPU:** 2.0% against 2.1%, because Metal's own work dominates. The saving is about scheduling and simplicity more than compute.
+- **Timing feedback helps but isn't reliable yet:** with an 8 ms budget, lag held at about 8 ms in three of four runs, against 9–21 ms without it. One run dropped to 50 fps, and tighter budgets often missed refreshes. It stays experimental.
+
+### Electron
+
+With a synthetic shader on Electron 45. This test predates the core library, so it uses its own per-frame messages. Nearly all of its CPU use is Electron, not sharing.
 
 | Test | Frame rate | CPU | Median lag | Torn / skipped frames |
 |---|---|---|---|---|
@@ -26,14 +49,32 @@ Measured on an M2 MacBook Air with Electron 45 and a synthetic test shader. CPU 
 | 4 × 1080p from one canvas | 60 fps each | 38% | 28 ms | 0 / 0 of 1,697 |
 | 2 × 4K from one canvas | 60 fps each | 36% | 27 ms | 0 / 4 of 837 |
 
-For comparison, sending 4K frames over localhost HTTP reached 14 fps at 107% CPU.
+For comparison, sending 4K frames over localhost HTTP reached 14 fps at 107% CPU. Full figures are in [experiments/electron-test/RESULTS.md](experiments/electron-test/RESULTS.md).
 
-The test used a separate Mach message for each frame, and sending from Electron needed one GPU copy per frame. It didn't test the control block in the draft, float formats, or non-Electron receivers such as TouchDesigner. Full figures and how to run them are in [experiments/electron-test/RESULTS.md](experiments/electron-test/RESULTS.md).
+## Build and test
+
+```bash
+make
+```
+
+```bash
+make test
+```
+
+`make test` runs the tests as real processes, including `kill -9` crashes, then repeats the stress test with the race widened, then confirms the deliberately broken build gets caught. To run the 4K benchmark:
+
+```bash
+tools/bench.sh shared
+```
 
 ## Repository
 
+- [`include/siberia.h`](include/siberia.h): the public API.
+- [`src/siberia.c`](src/siberia.c): the core library.
+- [`test/`](test/): the multi-process tests.
+- [`tools/`](tools/): the Metal benchmark.
 - [`docs/protocol.md`](docs/protocol.md): the draft protocol.
-- [`experiments/electron-test/`](experiments/electron-test/): the test behind the numbers above. It installs its own Node and Electron, so `.tools` and `node_modules` are not in git.
+- [`experiments/electron-test/`](experiments/electron-test/): the first test, in Electron. It needs its own Node in `.tools` and is set up by hand.
 
 ## First user
 
