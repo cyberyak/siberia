@@ -122,7 +122,21 @@ static napi_value write_(napi_env env, napi_callback_info info) {
   return boolean(env, true);
 }
 
-// read(sub, width, height, pixels): copies the newest frame out as RGBA, scaling if it has to.
+// Copies a surface out as RGBA, scaling with nearest-neighbour sampling if it has to.
+static void copyOut(siberia_subscriber *s, IOSurfaceRef surface, int w, int h, void *data) {
+  siberia_format fmt; siberia_subscriber_format(s, &fmt);
+  int sw = (int)fmt.width, sh = (int)fmt.height, swap = fmt.pixel_format != 'RGBA'; size_t row = IOSurfaceGetBytesPerRow(surface);
+  IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL);
+  const uint8_t *in = (const uint8_t *)IOSurfaceGetBaseAddress(surface); uint32_t *out = (uint32_t *)data;
+  for (int y = 0; y < h; y++) {
+    const uint32_t *src = (const uint32_t *)(in + (size_t)(sh == h ? y : (int)(((int64_t)y * 2 + 1) * sh / (h * 2))) * row); uint32_t *dst = out + (size_t)y * w;
+    if (sw == w && !swap) { memcpy(dst, src, (size_t)w * 4); continue; }
+    for (int x = 0; x < w; x++) { uint32_t p = src[sw == w ? x : (int)(((int64_t)x * 2 + 1) * sw / (w * 2))]; dst[x] = swap ? (p & 0xff00ff00u) | (p & 0xffu) << 16 | (p >> 16 & 0xffu) : p; }
+  }
+  IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+}
+
+// read(sub, width, height, pixels): copies the newest frame out as RGBA.
 // Returns true, null with nothing new, or 'closed'.
 static napi_value read_(napi_env env, napi_callback_info info) {
   ARGS(4); Subscriber *s = subscribers[(size_t)toInt(env, argv[0])]; int w = toInt(env, argv[1]), h = toInt(env, argv[2]); void *data; size_t bytes; napi_get_typedarray_info(env, argv[3], NULL, &bytes, &data, NULL, NULL);
@@ -130,17 +144,16 @@ static napi_value read_(napi_env env, napi_callback_info info) {
   siberia_frame f; int r = siberia_subscriber_acquire(s->s, &f);
   if (r == SIBERIA_CLOSED) { napi_value v; napi_create_string_utf8(env, "closed", NAPI_AUTO_LENGTH, &v); return v; }
   if (r != SIBERIA_OK) return null_(env);
-  siberia_format fmt; siberia_subscriber_format(s->s, &fmt);
-  int sw = (int)fmt.width, sh = (int)fmt.height, swap = fmt.pixel_format != 'RGBA'; size_t row = IOSurfaceGetBytesPerRow(f.surface);
-  IOSurfaceLock(f.surface, kIOSurfaceLockReadOnly, NULL);
-  const uint8_t *in = (const uint8_t *)IOSurfaceGetBaseAddress(f.surface); uint32_t *out = (uint32_t *)data;
-  for (int y = 0; y < h; y++) {
-    const uint32_t *src = (const uint32_t *)(in + (size_t)(sh == h ? y : (int)(((int64_t)y * 2 + 1) * sh / (h * 2))) * row); uint32_t *dst = out + (size_t)y * w;
-    if (sw == w && !swap) { memcpy(dst, src, (size_t)w * 4); continue; }
-    for (int x = 0; x < w; x++) { uint32_t p = src[sw == w ? x : (int)(((int64_t)x * 2 + 1) * sw / (w * 2))]; dst[x] = swap ? (p & 0xff00ff00u) | (p & 0xffu) << 16 | (p >> 16 & 0xffu) : p; }
-  }
-  IOSurfaceUnlock(f.surface, kIOSurfaceLockReadOnly, NULL);
+  copyOut(s->s, f.surface, w, h, data);
   siberia_subscriber_release(s->s);
+  return boolean(env, true);
+}
+
+// sample(sub, surface, width, height, pixels): a small RGBA copy of a frame you already hold.
+static napi_value sample(napi_env env, napi_callback_info info) {
+  ARGS(5); Subscriber *s = subscribers[(size_t)toInt(env, argv[0])]; IOSurfaceRef surface = surfaceArg(env, argv[1]); int w = toInt(env, argv[2]), h = toInt(env, argv[3]); void *data; size_t bytes; napi_get_typedarray_info(env, argv[4], NULL, &bytes, &data, NULL, NULL);
+  if (!surface || w < 1 || h < 1 || bytes < (size_t)w * h * 4) return boolean(env, false);
+  copyOut(s->s, surface, w, h, data);
   return boolean(env, true);
 }
 
@@ -166,6 +179,8 @@ static napi_value acquire(napi_env env, napi_callback_info info) {
   field(env, o, "width", number(env, (double)IOSurfaceGetWidth(f.surface)));
   field(env, o, "height", number(env, (double)IOSurfaceGetHeight(f.surface)));
   field(env, o, "sequence", number(env, (double)f.sequence));
+  siberia_format fmt; siberia_subscriber_format(s->s, &fmt);
+  napi_value pf; napi_create_string_utf8(env, fmt.pixel_format == 'RGBA' ? "rgba" : "bgra", NAPI_AUTO_LENGTH, &pf); field(env, o, "pixelFormat", pf);
   field(env, o, "timeNs", number(env, (double)f.time_ns));
   return o;
 }
@@ -205,6 +220,6 @@ static napi_value stats(napi_env env, napi_callback_info) {
 
 NAPI_MODULE_INIT() {
 #define EXPORT(n, fn) { napi_value f; napi_create_function(env, n, NAPI_AUTO_LENGTH, fn, NULL, &f); napi_set_named_property(env, exports, n, f); }
-  EXPORT("publish", publish) EXPORT("subscribers", subscriberCount) EXPORT("write", write_) EXPORT("read", read_) EXPORT("onSent", setOnSent) EXPORT("send", send) EXPORT("subscribe", subscribe) EXPORT("acquire", acquire) EXPORT("release", release) EXPORT("reportRefresh", reportRefresh) EXPORT("closePublisher", closePublisher) EXPORT("closeSubscriber", closeSubscriber) EXPORT("now", now) EXPORT("list", list) EXPORT("stats", stats)
+  EXPORT("publish", publish) EXPORT("subscribers", subscriberCount) EXPORT("write", write_) EXPORT("read", read_) EXPORT("sample", sample) EXPORT("onSent", setOnSent) EXPORT("send", send) EXPORT("subscribe", subscribe) EXPORT("acquire", acquire) EXPORT("release", release) EXPORT("reportRefresh", reportRefresh) EXPORT("closePublisher", closePublisher) EXPORT("closeSubscriber", closeSubscriber) EXPORT("now", now) EXPORT("list", list) EXPORT("stats", stats)
   return exports;
 }

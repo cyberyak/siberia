@@ -33,7 +33,7 @@ For several outputs, pass one stream per tile, with the columns and rows of the 
 
 ## Receiving
 
-Call `acquire` once per display frame. It returns a frame, `null` when there's nothing new, or `'closed'` when the publisher has gone.
+Call `acquire` once per display frame. It returns a frame, `null` when there's nothing new, or `'closed'` when the publisher has gone. A frame includes its `pixelFormat`, so pass that to `importSharedTexture`.
 
 ```js
 const sub = siberia.subscribe('My output'); // null until the stream exists
@@ -41,7 +41,7 @@ const frame = siberia.acquire(sub);
 if (frame && frame !== 'closed') {
   const imported = sharedTexture.importSharedTexture({
     textureInfo: {
-      pixelFormat: 'bgra',
+      pixelFormat: frame.pixelFormat,
       codedSize: { width: frame.width, height: frame.height },
       handle: { ioSurface: frame.surface },
     },
@@ -82,6 +82,7 @@ const result = siberia.read(sub, 1920, 1080, rgbaBuffer); // true, null, or 'clo
 
 ## Other calls
 
+- `sample(sub, frame.surface, width, height, pixels)`: a small RGBA copy of a frame you hold, for when you need a few CPU pixels alongside the GPU frame.
 - `list()`: streams on this Mac, as `{ name, pid }`.
 - `reportRefresh(sub, timeNs)`: tells the publisher when this display refreshes next, using `now()`'s clock.
 - `closePublisher(handle)`, `closeSubscriber(handle)`: call these before quitting.
