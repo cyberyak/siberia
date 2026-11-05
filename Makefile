@@ -1,7 +1,7 @@
 CC = clang
 CFLAGS = -std=c11 -O2 -Wall -Wextra -Werror -Iinclude
 FRAMEWORKS = -framework CoreFoundation -framework IOSurface
-all: build/libsiberia.a build/test_siberia build/bench
+all: build/libsiberia.a build/test_siberia build/bench build/pattern
 build:
 	mkdir -p build
 build/siberia.o: src/siberia.c include/siberia.h | build
@@ -22,3 +22,5 @@ test: all build/test_yield build/test_broken
 .PHONY: all test
 build/bench: tools/bench.m build/libsiberia.a
 	$(CC) -O2 -Iinclude -fobjc-arc tools/bench.m build/libsiberia.a $(FRAMEWORKS) -framework Foundation -framework Metal -o $@
+build/pattern: tools/pattern.c build/libsiberia.a
+	$(CC) $(CFLAGS) tools/pattern.c build/libsiberia.a $(FRAMEWORKS) -o $@

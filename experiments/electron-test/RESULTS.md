@@ -1,4 +1,21 @@
-# Electron test, 2026-11-05
+# Electron test
+
+## On the core library
+
+Electron 45.2.3 through `bindings/electron`, with no per-frame messages and a copy that doesn't block the main thread. The call on the main thread dropped from about 5.3 ms to 1.6 ms at 4K.
+
+Another app held the GPU at 100% throughout, so these show correctness under load, not best-case speed. They can't be compared with the table below.
+
+| Test | Rate | Median lag | Torn / skipped frames |
+|---|---|---|---|
+| Send 4K | 57.6 fps | 18 ms | 0 / 17 of 403 |
+| 4 x 1080p, tiles | 58.7 fps each | 15 ms | 0 / 32 of 1408 |
+| 2 x 4K, tiles | 41.2 fps each | 30 ms | 0 / 224 of 494 |
+| Receive 4K into WebGPU | 50 fps | 25 ms | 0 torn in frames checked |
+
+Skipped frames were dropped because the previous copy was still running, as designed. `busyDrops` counts them, and `slotDrops` stayed at 0. When a publisher exited, Electron reported `closed`.
+
+## First test, before the core library, 2026-11-05
 
 M2 MacBook Air, macOS 15.3.1, Electron 45.2.3. CPU: 100% = one core. Raw reports are in `results/`.
 

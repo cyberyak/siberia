@@ -184,7 +184,8 @@ int siberia_list(siberia_stream_info *out, int max) {
   for (struct dirent *e; n < max && (e = readdir(d));) {
     if (e->d_name[0] == '.') continue;
     snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
-    if (read_entry(path, &pid, service, sizeof service) || !pid_alive(pid)) continue;
+    if (read_entry(path, &pid, service, sizeof service)) continue;
+    if (!pid_alive(pid)) { unlink(path); continue; } /* left behind by a crash */
     decode_name(e->d_name, out[n].name);
     out[n++].pid = pid;
   }

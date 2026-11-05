@@ -4,7 +4,7 @@ Siberia is a protocol for sharing live video between apps on one Mac, built for 
 
 Apps share GPU memory instead of copying frames. A frame costs about the same to share at any resolution, because its pixels never move. The protocol also carries what Syphon-style sharing leaves to each app: timing, colour information, and what the receiver actually needs, so a sender never renders work nobody will use.
 
-**Status:** early. The core library works and is tested on one Mac, but it hasn't been connected to a real app yet. The protocol is a draft and will change.
+**Status:** early. The core library works and is tested on one Mac, and it works from Electron, but no real app uses it yet. The protocol is a draft and will change.
 
 ## Goals
 
@@ -40,7 +40,9 @@ Two findings were less flattering:
 
 ### Electron
 
-With a synthetic shader on Electron 45. This test predates the core library, so it uses its own per-frame messages. Nearly all of its CPU use is Electron, not sharing.
+Tested on Electron 45 with a synthetic shader, sending and receiving through [`bindings/electron`](bindings/electron/README.md). Nearly all of the CPU use in Electron is Electron itself, not sharing.
+
+The figures below come from the first test, on a quiet GPU, before the core library existed.
 
 | Test | Frame rate | CPU | Median lag | Torn / skipped frames |
 |---|---|---|---|---|
@@ -48,6 +50,8 @@ With a synthetic shader on Electron 45. This test predates the core library, so 
 | Receive 4K into WebGPU | 60 fps | 37% | 7–8 ms | 0 torn in frames checked |
 | 4 × 1080p from one canvas | 60 fps each | 38% | 28 ms | 0 / 0 of 1,697 |
 | 2 × 4K from one canvas | 60 fps each | 36% | 27 ms | 0 / 4 of 837 |
+
+Running on the core library has only been measured with another app holding the GPU at 100%. No frames tore, and it held 58 fps for 4K and 41 fps for 2 × 4K, dropping frames rather than stalling. Clean numbers are still to come.
 
 For comparison, sending 4K frames over localhost HTTP reached 14 fps at 107% CPU. Full figures are in [experiments/electron-test/RESULTS.md](experiments/electron-test/RESULTS.md).
 
@@ -71,10 +75,11 @@ tools/bench.sh shared
 
 - [`include/siberia.h`](include/siberia.h): the public API.
 - [`src/siberia.c`](src/siberia.c): the core library.
+- [`bindings/electron/`](bindings/electron/README.md): the Electron binding.
 - [`test/`](test/): the multi-process tests.
-- [`tools/`](tools/): the Metal benchmark.
+- [`tools/`](tools/): the Metal benchmark, and a pattern tool that checks streams from outside.
 - [`docs/protocol.md`](docs/protocol.md): the draft protocol.
-- [`experiments/electron-test/`](experiments/electron-test/): the first test, in Electron. It needs its own Node in `.tools` and is set up by hand.
+- [`experiments/electron-test/`](experiments/electron-test/): the Electron test. It needs its own Node in `.tools` and is set up by hand.
 
 ## First user
 

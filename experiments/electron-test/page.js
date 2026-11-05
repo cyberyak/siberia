@@ -15,13 +15,9 @@ const DRAW = VS + `struct U{frame:u32,ms:u32,w:f32,h:f32,ox:f32,oy:f32};@group(0
   const device = await adapter.requestDevice();
   device.onuncapturederror = (e) => say({ error: e.error.message });
   const c = document.getElementById('c'); c.width = W; c.height = H;
-  c.style.width = mode === 'send' || mode === 'multi' || mode === 'tiles' ? W + 'px' : '100vw'; c.style.height = mode === 'send' || mode === 'multi' || mode === 'tiles' ? H + 'px' : '100vh';
+  c.style.width = mode === 'send' || mode === 'tiles' ? W + 'px' : '100vw'; c.style.height = mode === 'send' || mode === 'tiles' ? H + 'px' : '100vh';
   const ctx = c.getContext('webgpu'), format = navigator.gpu.getPreferredCanvasFormat();
   ctx.configure({ device, format, alphaMode: 'opaque', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
-  const extra = [];
-  window.openOutputs = () => { for (let i = 1; i < +q.get('count'); i++) { const w = window.open('about:blank', 'o' + i, 'popup'); if (!w) { say({ error: 'popup ' + i + ' blocked' }); continue; }
-    w.document.body.style.cssText = 'margin:0;background:#000;overflow:hidden'; const cv = w.document.createElement('canvas'); cv.width = W; cv.height = H; cv.style.cssText = `display:block;width:${W}px;height:${H}px`; w.document.body.appendChild(cv);
-    const x = cv.getContext('webgpu'); x.configure({ device, format, alphaMode: 'opaque' }); extra.push(x); const loop = () => { cv.style.opacity = cv.style.opacity === '0.999' ? '1' : '0.999'; w.requestAnimationFrame(loop); }; w.requestAnimationFrame(loop); } say({ opened: extra.length }); };
   const pass = (enc, view, pipe, bg, n = 3) => { const r = enc.beginRenderPass({ colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] }); r.setPipeline(pipe); if (bg) r.setBindGroup(0, bg); r.draw(n); r.end(); };
   if (mode === 'recv') return recv(device, ctx, format, pass);
   const mod = device.createShaderModule({ code: DRAW });
@@ -39,7 +35,6 @@ const DRAW = VS + `struct U{frame:u32,ms:u32,w:f32,h:f32,ox:f32,oy:f32};@group(0
     for (let i = 0; i < tiles; i++) { const u = new ArrayBuffer(32), ox = (i % cols) * tw, oy = Math.floor(i / cols) * th; new Uint32Array(u, 0, 2).set([frame & 0xffff, ms]); new Float32Array(u, 8, 4).set([tw, th, ox, oy]); device.queue.writeBuffer(ubs[i], 0, u);
       rp.setViewport(ox, oy, tw, th, 0, 1); rp.setScissorRect(ox, oy, tw, th); rp.setBindGroup(0, bgs[i]); rp.draw(3); }
     rp.end();
-    extra.forEach((x) => pass(enc, x.getCurrentTexture().createView(), pipe, bg));
     let read = false; if (buf) { if (busy) skipped++; else { busy = read = true; enc.copyTextureToBuffer({ texture: tex }, { buffer: buf, bytesPerRow: row }, [W, H]); } }
     device.queue.submit([enc.finish()]);
     if (read) buf.mapAsync(GPUMapMode.READ).then(() => { const t = performance.now(), s = new Uint8Array(buf.getMappedRange()); for (let y = 0; y < H; y++) data.set(s.subarray(y * row, y * row + W * 4), y * W * 4); buf.unmap(); copyMs += performance.now() - t; reads++;
@@ -79,4 +74,5 @@ function recv(device, ctx, format, pass) {
     if (performance.now() - t0 > 2000) { const el = (performance.now() - t0) / 1000; lat.sort((x, y) => x - y); say({ recvFps: shown / el, checked, torn, latP50: lat[lat.length >> 1], latP99: lat[Math.floor(lat.length * .99)], jsMs: shown ? recvMs / shown : 0, lastFrame: last }); shown = checked = torn = 0; recvMs = 0; lat = []; t0 = performance.now(); }
   });
   say({ ready: 1 });
+  const want = () => { window.siberia.ipc.send('want'); requestAnimationFrame(want); }; want();
 }

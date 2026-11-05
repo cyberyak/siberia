@@ -87,10 +87,10 @@ Each subscriber can report its next refresh, and the publisher can start renderi
 
 ## Electron
 
-Tested with Electron 45.2.3, where both APIs are experimental. This test used its own per-frame messages and hasn't moved to the core library yet.
+Tested with Electron 45.2.3 through `bindings/electron`. Both Electron APIs below are experimental.
 
-- **Sending:** an offscreen window with `useSharedTexture` delivers each frame as an IOSurface through its `paint` event. That surface goes back to Chromium, so frames are GPU-copied into the ring.
-- **Receiving:** `sharedTexture` imports an IOSurface and produces a `VideoFrame`, which `importExternalTexture` brings into WebGPU.
+- **Sending:** an offscreen window with `useSharedTexture` delivers each frame as an IOSurface through its `paint` event. Chromium needs that surface back, so the frame is GPU-copied into the ring and committed when the copy finishes. If the last copy is still running, the frame is dropped.
+- **Receiving:** `sharedTexture` imports an IOSurface and produces a `VideoFrame`, which `importExternalTexture` brings into WebGPU. The claim is released from `allReferencesReleased`.
 - **Several outputs:** one offscreen canvas holds them as tiles, which are split into streams in a single GPU pass. Offscreen popups never fired `paint`, so they are not an option.
 
 ## Open questions

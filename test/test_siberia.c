@@ -189,6 +189,8 @@ static void test_publisher_crash(void) {
   waitpid(sub, NULL, 0); close(subfd);
   int n = siberia_list(list, 64), found = 0; for (int i = 0; i < n; i++) found += !strcmp(list[i].name, name);
   EQ(found, 0); // a dead publisher isn't listed
+  char dir[900], path[1100], enc[128]; confstr(_CS_DARWIN_USER_TEMP_DIR, dir, sizeof dir); char *e = enc; for (const char *c = name; *c; c++) { if (*c == ' ') e += sprintf(e, "%%20"); else if (*c == '.') e += sprintf(e, "%%2E"); else *e++ = *c; } *e = 0;
+  snprintf(path, sizeof path, "%ssiberia/%s", dir, enc); CHECK(access(path, F_OK) != 0); // and its file is cleared away
   EQ(siberia_publisher_create(name, &BGRA, 1, &p), SIBERIA_OK); // and its name can be taken over
   siberia_publisher_destroy(p);
 }
