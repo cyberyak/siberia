@@ -24,3 +24,9 @@ build/bench: tools/bench.m build/libsiberia.a
 	$(CC) -O2 -Iinclude -fobjc-arc tools/bench.m build/libsiberia.a $(FRAMEWORKS) -framework Foundation -framework Metal -o $@
 build/pattern: tools/pattern.c build/libsiberia.a
 	$(CC) $(CFLAGS) tools/pattern.c build/libsiberia.a $(FRAMEWORKS) -o $@
+# The binding, under plain Node. It uses the Electron test's Node and build.
+NODE = experiments/electron-test/.tools/node-v26.13.0-darwin-arm64/bin/node
+test-binding:
+	experiments/electron-test/build.sh
+	$(NODE) bindings/electron/test.js experiments/electron-test/build/addon.node
+.PHONY: test-binding

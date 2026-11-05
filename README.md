@@ -82,6 +82,12 @@ make test
 tools/bench.sh shared
 ```
 
+To test the Electron binding under plain Node:
+
+```bash
+make test-binding
+```
+
 ## Repository
 
 - [`include/siberia.h`](include/siberia.h): the public API.
