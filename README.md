@@ -103,3 +103,13 @@ make test-binding
 - [`tools/`](tools/): the Metal benchmark, and a pattern tool that checks streams from outside.
 - [`docs/protocol.md`](docs/protocol.md): the draft protocol.
 - [`experiments/electron-test/`](experiments/electron-test/): the Electron test. It needs its own Node in `.tools` and is set up by hand.
+
+## Contributing
+
+Development happens here. Issues and pull requests are welcome. Please keep changes small, add a test that fails without them, and run `make test` first.
+
+The protocol is an early draft and will change, so expect breaking changes until a version is declared stable.
+
+## License
+
+Siberia is free to use, change and ship, including in commercial and closed-source apps, under the [MIT License](LICENSE). Keep the copyright and licence notice in copies of the code.
